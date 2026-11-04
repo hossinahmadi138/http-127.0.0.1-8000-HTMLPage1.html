@@ -1,0 +1,642 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Hand Particles - Hossein</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #020509;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+
+        #scene {
+            position: fixed;
+            inset: 0;
+        }
+
+        .panel {
+            position: fixed;
+            top: 25px;
+            width: 100%;
+            text-align: center;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        h1 {
+            color: #00ffcc;
+            letter-spacing: 6px;
+            font-size: 30px;
+            text-shadow: 0 0 20px #00ffcc;
+        }
+
+        #status {
+            margin-top: 15px;
+            color: #00ffcc;
+        }
+
+        button {
+            pointer-events: auto;
+            margin-top: 15px;
+            padding: 12px 30px;
+            background: #003d35;
+            border: 1px solid #00ffcc;
+            border-radius: 30px;
+            color: white;
+            cursor: pointer;
+        }
+
+        #camera {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 180px;
+            border: 2px solid #00ffcc;
+            border-radius: 12px;
+            transform: scaleX(-1);
+            z-index: 5;
+        }
+
+        #credit {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(.5);
+            text-align: center;
+            width: 90%;
+            font-size: clamp(22px, 5vw, 48px);
+            font-weight: bold;
+            color: #00ffcc;
+            text-shadow: 0 0 15px #00ffcc, 0 0 35px #00ffcc;
+            opacity: 0;
+            transition: all .5s;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+            #credit.show {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+    </style>
+</head>
+
+<body>
+
+    <div id="scene"></div>
+
+    <div class="panel">
+        <h1>HAND PARTICLES</h1>
+        <p>Control The Universe With Your Hands</p>
+
+        <button id="start">START CAMERA</button>
+
+        <div id="status">Waiting for camera...</div>
+    </div>
+
+    <div id="credit">
+        CREATED BY<br>
+        HOSSEIN PIJAMEH POOSH
+    </div>
+
+    <video id="camera" autoplay playsinline></video>
+
+    <script type="module">
+
+        import * as THREE from
+            'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
+
+        import {
+            HandLandmarker,
+            FilesetResolver
+        } from
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+
+
+        // THREE.JS
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(
+            65,
+            innerWidth / innerHeight,
+            0.1,
+            1000
+        );
+
+        camera.position.z = 12;
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true
+        });
+
+        renderer.setSize(innerWidth, innerHeight);
+
+        renderer.setPixelRatio(
+            Math.min(devicePixelRatio, 2)
+        );
+
+        document.getElementById('scene')
+            .appendChild(renderer.domElement);
+
+
+        // PARTICLES
+
+        const COUNT = 8000;
+
+        const positions = new Float32Array(COUNT * 3);
+        const colors = new Float32Array(COUNT * 3);
+
+        const sphere = [];
+        const heart = [];
+
+        for (let i = 0; i < COUNT; i++) {
+
+            const u = Math.random() * 2 - 1;
+            const a = Math.random() * Math.PI * 2;
+
+            const r = Math.sqrt(1 - u * u);
+
+            sphere.push([
+                r * Math.cos(a) * 3,
+                u * 3,
+                r * Math.sin(a) * 3
+            ]);
+
+            const t = Math.random() * Math.PI * 2;
+
+            const scale = Math.sqrt(Math.random());
+
+            heart.push([
+                16 * Math.pow(Math.sin(t), 3)
+                * scale * .19,
+
+                (13 * Math.cos(t)
+                    - 5 * Math.cos(2 * t)
+                    - 2 * Math.cos(3 * t)
+                    - Math.cos(4 * t))
+                * scale * .19,
+
+                (Math.random() - .5) * .8
+            ]);
+
+            const j = i * 3;
+
+            positions[j] = sphere[i][0];
+            positions[j + 1] = sphere[i][1];
+            positions[j + 2] = sphere[i][2];
+
+            colors[j] = 0;
+            colors[j + 1] = 1;
+            colors[j + 2] = .7;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+
+        geometry.setAttribute(
+            'position',
+            new THREE.BufferAttribute(positions, 3)
+        );
+
+        geometry.setAttribute(
+            'color',
+            new THREE.BufferAttribute(colors, 3)
+        );
+
+        const material = new THREE.PointsMaterial({
+            size: .035,
+            vertexColors: true,
+            transparent: true,
+            opacity: .95,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particles = new THREE.Points(
+            geometry,
+            material
+        );
+
+        scene.add(particles);
+
+
+        // HAND TRACKING
+        const video = document.getElementById('camera');
+
+        const status = document.getElementById('status');
+
+        const credit = document.getElementById('credit');
+
+        let tracker = null;
+
+        let lastTime = -1;
+
+        let mode = 'sphere';
+
+        let spread = 1;
+
+        let targetSpread = 1;
+
+        let offsetX = 0;
+        let offsetY = 0;
+
+        let targetX = 0;
+        let targetY = 0;
+
+        let gold = false;
+
+        let wave = 0;
+
+        let previousX = null;
+        let previousY = null;
+
+        let lastMotion = 0;
+
+        const smooth = (a, b, t) => a + (b - a) * t;
+
+
+        // GESTURE CLASSIFICATION
+
+        function distance(a, b) {
+
+            return Math.hypot(
+                a.x - b.x,
+                a.y - b.y
+            );
+        }
+
+        function classify(hand) {
+
+            const wrist = hand[0];
+
+            const fingers = [
+                [8, 6],
+                [12, 10],
+                [16, 14],
+                [20, 18]
+            ];
+
+            const extended = fingers.map(([tip, joint]) =>
+                hand[tip].y < hand[joint].y
+            );
+
+            const count = extended.filter(Boolean).length;
+
+            const pinch = distance(hand[4], hand[8]) < .065;
+
+            // PINCH
+
+            if (pinch) return 'pinch';
+
+            // PEACE SIGN
+
+            if (
+                extended[0] &&
+                extended[1] &&
+                !extended[2] &&
+                !extended[3]
+            ) return 'peace';
+
+            // POINTING
+
+            if (
+                extended[0] &&
+                !extended[1] &&
+                !extended[2] &&
+                !extended[3]
+            ) return 'point';
+
+            // THUMBS UP
+
+            if (
+                count === 0 &&
+                hand[4].y < hand[3].y - .08
+            ) return 'thumb';
+
+            // OPEN HAND
+
+            if (count >= 4) return 'open';
+
+            // FIST
+
+            if (count === 0) return 'fist';
+
+            return 'sphere';
+        }
+
+
+        // START CAMERA
+
+        async function startCamera() {
+
+            try {
+
+                status.textContent = 'Loading AI...';
+
+                const vision = await FilesetResolver
+                    .forVisionTasks(
+                        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+                    );
+
+                tracker = await HandLandmarker.createFromOptions(
+                    vision,
+                    {
+                        baseOptions: {
+                            modelAssetPath:
+                                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+                            delegate: 'GPU'
+                        },
+
+                        runningMode: 'VIDEO',
+                        numHands: 2
+                    }
+                );
+
+                const stream =
+                    await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            width: 640,
+                            height: 480
+                        }
+                    });
+
+                video.srcObject = stream;
+
+                await video.play();
+
+                status.textContent = 'Show your hands!';
+
+            } catch (error) {
+
+                console.error(error);
+
+                status.textContent =
+                    'Camera or AI loading error!';
+
+            }
+        }
+
+        document.getElementById('start')
+            .addEventListener('click', startCamera);
+
+
+        // HAND PROCESSING
+
+        function processHands() {
+
+            if (!tracker || video.readyState < 2) return;
+
+            if (video.currentTime === lastTime) return;
+
+            lastTime = video.currentTime;
+
+            const result = tracker.detectForVideo(
+                video,
+                performance.now()
+            );
+
+            const hands = result.landmarks;
+
+            gold = false;
+
+            credit.classList.remove('show');
+
+            if (hands.length === 0) {
+
+                mode = 'sphere';
+
+                targetSpread = 1;
+
+                targetX = 0;
+                targetY = 0;
+
+                status.textContent = 'Show your hand!';
+
+                return;
+            }
+
+            // TWO OPEN HANDS
+
+            if (
+                hands.length === 2 &&
+                classify(hands[0]) === 'open' &&
+                classify(hands[1]) === 'open'
+            ) {
+
+                mode = 'credit';
+
+                targetSpread = 1.5;
+
+                credit.classList.add('show');
+
+                status.textContent = 'TWO HANDS - CREATOR MODE';
+
+                return;
+            }
+
+            const hand = hands[0];
+
+            const gesture = classify(hand);
+
+            const index = hand[8];
+
+            targetX = (.5 - index.x) * 12;
+            targetY = (.5 - index.y) * 7;
+
+            // MOTION DETECTION
+
+            const center = hand[9];
+
+            if (previousX !== null) {
+
+                const movement = Math.hypot(
+                    center.x - previousX,
+                    center.y - previousY
+                );
+
+                if (movement > .055) {
+
+                    wave = 1;
+
+                    lastMotion = performance.now();
+                }
+            }
+            previousX = center.x;
+            previousY = center.y;
+
+            // GESTURES
+
+            switch (gesture) {
+
+                case 'open':
+
+                    mode = 'explosion';
+                    targetSpread = 1.9;
+                    status.textContent = 'OPEN HAND - EXPLOSION';
+
+                    break;
+
+                case 'fist':
+
+                    mode = 'fist';
+                    targetSpread = .4;
+                    status.textContent = 'FIST - CONTRACT';
+
+                    break;
+
+                case 'pinch':
+
+                    mode = 'pinch';
+                    targetSpread = .8;
+                    status.textContent = 'PINCH - ENERGY BALL';
+
+                    break;
+
+                case 'peace':
+
+                    mode = 'heart';
+                    targetSpread = 1;
+                    status.textContent = 'PEACE - HEART';
+
+                    break;
+
+                case 'thumb':
+
+                    mode = 'thumb';
+                    targetSpread = 1;
+                    gold = true;
+                    status.textContent = 'THUMBS UP - GOLDEN MODE';
+
+                    break;
+
+                case 'point':
+
+                    mode = 'point';
+                    targetSpread = 1;
+                    status.textContent = 'POINT - MOVE PARTICLES';
+
+                    break;
+
+                default:
+
+                    mode = 'sphere';
+                    targetSpread = 1;
+                    status.textContent = 'ENERGY SPHERE';
+
+            }
+        }
+
+
+        // ANIMATION
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+
+            requestAnimationFrame(animate);
+
+            processHands();
+
+            const time = clock.getElapsedTime();
+
+            spread = smooth(spread, targetSpread, .07);
+
+            offsetX = smooth(offsetX, targetX, .08);
+            offsetY = smooth(offsetY, targetY, .08);
+
+            if (performance.now() - lastMotion > 250) {
+                wave *= .94;
+            }
+
+            const colorTarget = gold
+                ? [1, .65, .05]
+                : [0, 1, .75];
+
+            for (let i = 0; i < COUNT; i++) {
+
+                const j = i * 3;
+
+                let target;
+
+                if (mode === 'heart') {
+                    target = heart[i];
+                } else {
+                    target = sphere[i];
+                }
+
+                const movement = Math.sin(
+                    time * 3 + i * .04
+                ) * .04;
+
+                const explosion = mode === 'explosion'
+                    ? Math.sin(i * .5 + time * 4) * wave * .35
+                    : 0;
+
+                const x = target[0] * spread + offsetX;
+                const y = target[1] * spread + offsetY;
+                const z = target[2] * spread;
+
+                positions[j] +=
+                    (x + movement + explosion - positions[j]) * .07;
+
+                positions[j + 1] +=
+                    (y + explosion - positions[j + 1]) * .07;
+
+                positions[j + 2] +=
+                    (z - positions[j + 2]) * .07;
+
+                colors[j] = smooth(
+                    colors[j], colorTarget[0], .05
+                );
+
+                colors[j + 1] = smooth(
+                    colors[j + 1], colorTarget[1], .05
+                );
+
+                colors[j + 2] = smooth(
+                    colors[j + 2], colorTarget[2], .05
+                );
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+
+            particles.rotation.y += .002;
+
+            particles.rotation.x =
+                Math.sin(time * .3) * .15;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+
+        // RESIZE
+
+        window.addEventListener('resize', () => {
+
+            camera.aspect = innerWidth / innerHeight;
+
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(innerWidth, innerHeight);
+
+        });
+
+    </script>
+
+</body>
+</html>
